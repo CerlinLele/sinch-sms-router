@@ -1,11 +1,14 @@
 package com.sinch.sms.api;
 
 import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -81,6 +84,88 @@ class MessageControllerTest {
 			.andExpect(jsonPath("$.id").value(blockedId))
 			.andExpect(jsonPath("$.status").value("BLOCKED"))
 			.andExpect(jsonPath("$.carrier").value(nullValue()));
+	}
+
+	@Test
+	void malformedJsonReturnsStableError() throws Exception {
+		mockMvc.perform(post("/messages")
+				.contentType("application/json")
+				.content("{\"destination_number\":"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("MALFORMED_JSON"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void invalidDestinationNumberReturnsStableValidationError() throws Exception {
+		mockMvc.perform(post("/messages")
+				.contentType("application/json")
+				.content("""
+					{"destination_number":"61491570156","content":"hello","format":"SMS"}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void blankContentReturnsStableValidationError() throws Exception {
+		mockMvc.perform(post("/messages")
+				.contentType("application/json")
+				.content("""
+					{"destination_number":"+61491570156","content":"   ","format":"SMS"}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void missingFormatReturnsStableValidationError() throws Exception {
+		mockMvc.perform(post("/messages")
+				.contentType("application/json")
+				.content("""
+					{"destination_number":"+61491570156","content":"hello"}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void mmsFormatReturnsStableValidationError() throws Exception {
+		mockMvc.perform(post("/messages")
+				.contentType("application/json")
+				.content("""
+					{"destination_number":"+61491570156","content":"hello","format":"MMS"}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void invalidOptOutNumberReturnsStableValidationError() throws Exception {
+		mockMvc.perform(post("/optout/{phoneNumber}", "61491570156"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void malformedMessageIdReturnsStableValidationError() throws Exception {
+		mockMvc.perform(get("/messages/{id}", "not-a-uuid"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
+	}
+
+	@Test
+	void unknownValidUuidReturnsNotFoundError() throws Exception {
+		mockMvc.perform(get("/messages/{id}", UUID.randomUUID()))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.code").value("MESSAGE_NOT_FOUND"))
+			.andExpect(jsonPath("$.message").value(not(emptyOrNullString())));
 	}
 
 	private String extractJsonValue(String json, String fieldName) {
