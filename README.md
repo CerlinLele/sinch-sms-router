@@ -12,6 +12,26 @@ From the `sms/` directory:
 
 The app starts on `http://localhost:8080` by default.
 
+## Testing
+
+Run the full test suite from `sms/`:
+
+```bash
+./mvnw.cmd clean test
+```
+
+Run a focused unit or integration test when iterating on one layer:
+
+```bash
+./mvnw.cmd -Dtest=PhoneNumberValidatorTest test
+./mvnw.cmd -Dtest=CarrierRouterTest test
+./mvnw.cmd -Dtest=OptOutServiceTest test
+./mvnw.cmd -Dtest=MessageServiceTest test
+./mvnw.cmd -Dtest=MessageControllerTest test
+```
+
+The `clean test` command is the best way to confirm the application still passes after a full rebuild, and it is the command used for the final verification step.
+
 ## API
 
 ### `POST /messages`
