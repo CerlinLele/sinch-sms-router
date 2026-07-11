@@ -16,7 +16,7 @@ Implement the SMS Router as a small Spring Boot application using a strict test-
 
 | Endpoint | Successful response |
 | --- | --- |
-| `POST /messages` | `201 Created` with `{ "id": "UUID", "status": "SENT|BLOCKED", "carrier": "Telstra|Optus|Spark|Global|null" }` |
+| `POST /messages` | `201 Created` with response fields `id`, `status` (`SENT` or `BLOCKED`), and `carrier` (`Telstra`, `Optus`, `Spark`, `Global`, or `null`) |
 | `GET /messages/{id}` | `200 OK` with the same `{id,status,carrier}` response shape |
 | `POST /optout/{phoneNumber}` | `200 OK` with `{ "phone_number": "+...", "opted_out": true }` |
 
