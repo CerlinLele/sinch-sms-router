@@ -2,6 +2,57 @@
 
 Small Spring Boot SMS router for the Sinch take-home. The app keeps all state in memory and follows a strict TDD-built contract.
 
+## Prerequisites
+
+- JDK 21
+- Maven Wrapper (`sms/mvnw.cmd`) provided in the repo
+- A shell that can run `java`, `javac`, and `./mvnw.cmd`
+
+To provide the JDK on Windows:
+
+- Install a JDK 21 distribution, such as Temurin 21 or Oracle JDK 21.
+- Set `JAVA_HOME` to the JDK installation directory.
+- Add `%JAVA_HOME%\bin` to `PATH`.
+- In your IDE, point the project SDK or Java runtime to the same JDK 21 install.
+
+Quick checks:
+
+```powershell
+java -version
+echo $env:JAVA_HOME
+where java
+```
+
+If `java -version` does not report Java 21, fix `JAVA_HOME` and `PATH` before running the app or tests.
+
+To provide the JDK on Linux or macOS:
+
+- Install a JDK 21 distribution, such as Temurin 21 or Oracle JDK 21.
+- Set `JAVA_HOME` to the JDK installation directory.
+- Add `$JAVA_HOME/bin` to `PATH`.
+- In your IDE, point the project SDK or Java runtime to the same JDK 21 install.
+
+Quick checks:
+
+```bash
+java -version
+echo "$JAVA_HOME"
+which java
+```
+
+Temporary shell setup examples:
+
+```bash
+export JAVA_HOME="/path/to/jdk-21"
+export PATH="$JAVA_HOME/bin:$PATH"
+```
+
+On macOS, you can also discover the installed JDK path with:
+
+```bash
+/usr/libexec/java_home -v 21
+```
+
 ## Run
 
 From the `sms/` directory:
