@@ -1,37 +1,37 @@
-# Sinch SMS Router Live Coding 扩展方向
+# Sinch SMS Router Live Coding Extension Directions
 
-结合 take-home PRD 和当前实现，live coding 最可能不是从零开发，而是在现有结构上增加一条业务规则、一个状态流转或一个接口。
+Based on the take-home PRD and current implementation, live coding is likely not a greenfield build but rather adding a business rule, state transition, or interface to the existing structure.
 
-## 第一梯队：最值得优先准备
+## Tier 1: Top Priorities to Prepare
 
-| 扩展方向 | 面试官可能怎么问 | 当前代码切入点 | 关键测试 |
+| Extension Direction | How Interview May Ask | Code Entry Points | Key Tests |
 | --- | --- | --- | --- |
-| 消息状态流转 | 发送后先是 `PENDING`，然后更新成 `SENT` / `DELIVERED` | `MessageService`、`MessageRepository`、`MessageController` | 合法/非法状态转换、未知 ID、终态不可修改 |
-| Delivery callback | 运营商通过 webhook 通知 delivery result | 新增 `POST /messages/{id}/delivery` | `SENT -> DELIVERED`、重复 callback 幂等 |
-| Opt-in / 取消退订 | 用户能重新订阅吗？ | `OptOutService`、`OptOutController` | 重复 opt-in、未退订号码、恢复后可以发送 |
-| 扩展路由规则 | 新增 Vodafone，或者按权重分流 | `CarrierRouter`、`Carrier` | 顺序、权重边界、非 AU 不影响 AU 状态 |
-| Carrier 故障切换 | Telstra 不可用时走 Optus | `CarrierRouter` 或新增 carrier availability/gateway 抽象 | primary failure、fallback、全部失败 |
-| AU/NZ 精确号码校验 | AU 和 NZ 格式需要真正不同 | `PhoneNumberValidator` | 国家码、长度、移动号前缀、非法本地格式 |
+| Message Status Transitions | After sending, status goes from `PENDING` to `SENT` / `DELIVERED` | `MessageService`, `MessageRepository`, `MessageController` | Valid/invalid transitions, unknown ID, immutable terminal states |
+| Delivery Callback | Carrier notifies delivery result via webhook | New `POST /messages/{id}/delivery` endpoint | `SENT -> DELIVERED`, idempotent retries |
+| Opt-in / Unsubscribe | Can users re-subscribe? | `OptOutService`, `OptOutController` | Repeated opt-in, unsubscribed numbers, can send after re-subscribe |
+| Extended Routing Rules | Add Vodafone, or weighted load balancing | `CarrierRouter`, `Carrier` | Order, weight boundaries, AU-specific rules don't affect NZ |
+| Carrier Failover | Fallback to Optus if Telstra unavailable | `CarrierRouter` or new carrier availability/gateway abstraction | Primary failure, fallback, complete outage |
+| AU/NZ Precise Phone Validation | AU and NZ formats require true differences | `PhoneNumberValidator` | Country code, length, mobile prefixes, invalid local formats |
 
-其中状态流转是最明显的扩展点：`MessageStatus` 已经定义了 `PENDING` 和 `DELIVERED`，但 `MessageService` 目前发送时直接落为 `SENT` 或 `BLOCKED`。README 也明确说 delivery simulation 是未来扩展，因此这很可能被拿来现场实现。
+Message status transitions are the most obvious extension point: `MessageStatus` already defines `PENDING` and `DELIVERED`, but `MessageService` currently sends directly to `SENT` or `BLOCKED`. The README explicitly mentions delivery simulation as future work, so this is likely a live coding candidate.
 
-推荐准备这样的状态机：
+Recommended state machine:
 
 ```text
 PENDING -> SENT -> DELIVERED
-    \----------> FAILED（如果现场要求新增）
+    \----------> FAILED (if interviewer requires)
 
 PENDING -> BLOCKED
-BLOCKED、DELIVERED、FAILED 为终态
+BLOCKED, DELIVERED, FAILED are terminal states
 ```
 
-不要允许任意 status 覆盖，否则面试官很可能追问为什么 `DELIVERED` 可以退回 `PENDING`。
+Do not allow arbitrary status overwrites—the interviewer will likely ask why `DELIVERED` can revert to `PENDING`.
 
-## 第二梯队：适合考察 Senior 设计能力
+## Tier 2: Senior Design Assessment
 
-### 1. 引入真实 Carrier gateway
+### 1. Introduce Real Carrier Gateway
 
-可能要求把“选择 carrier”和“调用 carrier”分开：
+May require separating "carrier selection" from "carrier invocation":
 
 ```java
 interface SmsGateway {
@@ -39,198 +39,198 @@ interface SmsGateway {
 }
 ```
 
-例如 `TelstraGateway`、`OptusGateway`、`SparkGateway`。流程变成：
+Example: `TelstraGateway`, `OptusGateway`, `SparkGateway`. Flow becomes:
 
 ```text
-校验 -> 检查 opt-out -> 保存 PENDING -> 选择 carrier
--> 调用 gateway -> 更新 SENT / FAILED
+Validate -> Check opt-out -> Save PENDING -> Select carrier
+-> Invoke gateway -> Update SENT / FAILED
 ```
 
-这能考察依赖倒置、异常处理和测试替身。现场不需要真的请求外部 API，通常 fake gateway 就够。
+Tests dependency inversion, exception handling, and test doubles. Live coding typically uses a fake gateway rather than real external APIs.
 
-### 2. Retry 和 fallback
+### 2. Retry and Fallback
 
-常见要求：
+Common requirements:
 
-- 运营商超时重试两次。
-- Telstra 失败后尝试 Optus。
-- 业务拒绝不重试，网络错误才重试。
-- 不允许重复发送已经成功的消息。
+- Carrier timeout triggers two retries.
+- Telstra failure falls back to Optus.
+- Business rejections do not retry; network errors do.
+- Never resend already-successful messages.
 
-需要区分：
+Requires distinguishing:
 
-- transient failure：可重试。
-- permanent failure：不可重试。
-- provider 已接收但客户端超时：存在重复发送风险，需要 idempotency key。
+- **Transient failure**: retry eligible.
+- **Permanent failure**: no retry.
+- **Provider received but client timeout**: risk of duplicate sending; need idempotency key.
 
-### 3. 幂等发送
+### 3. Idempotent Sends
 
-可能增加 `Idempotency-Key` header，防止客户端重试产生两条短信。
+May add `Idempotency-Key` header to prevent duplicate messages from client retries.
 
-最小实现可以维护：
+Minimal implementation maintains:
 
 ```text
 idempotency key -> message ID
 ```
 
-相同 key 和相同请求返回原消息；相同 key 但请求内容不同返回 `409 Conflict`。还要考虑“检查 key”和“创建消息”必须是原子操作。
+Same key and request return original message; same key, different request returns `409 Conflict`. Atomic check-and-create is essential.
 
-### 4. 并发安全
+### 4. Concurrency Safety
 
-现有实现已经用了 `ConcurrentHashMap` 和 `AtomicReference`，面试官可能进一步问：
+Current implementation already uses `ConcurrentHashMap` and `AtomicReference`. Interviewer may ask:
 
-- 100 个并发 AU 请求是否仍严格交替？
-- opt-out 和 send 同时发生时，语义是什么？
-- 多实例部署后 `AtomicReference` 是否还有效？
-- 服务重启后路由顺序和 opt-out 是否丢失？
+- Does 100 concurrent AU requests strictly alternate?
+- What semantics when opt-out and send happen simultaneously?
+- Is `AtomicReference` valid across multiple instances?
+- Are routing order and opt-outs lost on service restart?
 
-`CarrierRouter` 对单实例并发交替是安全的，但多实例并不保证全局轮询；这时通常需要数据库、Redis，或接受“每实例轮询”的明确语义。
+`CarrierRouter` is safe for single-instance concurrency but does not guarantee global round-robin across instances. Multi-instance typically requires database, Redis, or explicit per-instance semantics.
 
-### 5. 持久化
+### 5. Persistence
 
-将 in-memory repository 换成 JPA/H2/PostgreSQL。当前已有 `MessageRepository` 接口，所以替换存储的边界比较清楚。
+Replace in-memory repository with JPA/H2/PostgreSQL. Current `MessageRepository` interface already defines clear boundaries.
 
-可能要求：
+May require:
 
-- 服务重启后消息仍存在。
-- opt-out 也持久化。
-- optimistic locking，防止并发状态覆盖。
-- 数据库唯一约束保证幂等。
+- Messages survive service restart.
+- Opt-outs persist.
+- Optimistic locking prevents concurrent status overwrites.
+- Database unique constraints ensure idempotency.
 
-现场如果时间短，不建议主动大改 JPA；只有题目明确要求时再做。
+If time is short, don't proactively refactor to JPA—only if explicitly required.
 
-## 第三梯队：API 和产品功能扩展
+## Tier 3: API and Product Features
 
-### Opt-out 管理
+### Opt-out Management
 
-除了取消退订，还可能增加：
+Beyond unsubscribe, may add:
 
-- `GET /optout/{phoneNumber}`：查询状态。
-- `DELETE /optout/{phoneNumber}`：恢复订阅。
-- 保存退订时间、来源和原因。
-- 全局退订与 sender-specific 退订。
-- 已经 `SENT` 的消息不受后续 opt-out 影响。
-- 仍为 `PENDING` 的消息是否应被阻止，需要先澄清。
+- `GET /optout/{phoneNumber}`: query status.
+- `DELETE /optout/{phoneNumber}`: re-subscribe.
+- Persist unsubscribe timestamp, source, and reason.
+- Global vs. sender-specific unsubscribe.
+- `SENT` messages unaffected by later opt-outs.
+- Clarify if `PENDING` messages should be blocked post-unsubscribe.
 
-当前 `OptOutService` 只需增加 `remove` / `isOptedOut` API，就能做一个很合适的 15-20 分钟现场题。
+Current `OptOutService` needs only `remove` / `isOptedOut` API additions for a solid 15–20 minute live coding problem.
 
-### 查询和分页
+### Query and Pagination
 
-可能增加：
+May add:
 
 ```http
 GET /messages?status=BLOCKED&carrier=Telstra&page=0&size=20
 ```
 
-需要考虑：
+Consider:
 
-- repository 增加查询能力。
-- 稳定排序，例如创建时间倒序。
-- 非法 status/carrier 返回 `400`。
-- 空结果返回 `200 []`。
-- 不应返回短信 content 等敏感数据，除非明确需要。
+- Repository query capability.
+- Stable sort, e.g., creation time descending.
+- Invalid status/carrier returns `400`.
+- Empty result returns `200 []`.
+- Do not return message content or other sensitive data unless explicitly needed.
 
-### 批量发送
+### Batch Send
 
-例如：
+Example:
 
 ```http
 POST /messages/batch
 ```
 
-主要设计问题：
+Key design questions:
 
-- 一个号码失败是否导致整个 batch 失败。
-- 返回 `207 Multi-Status`，还是每项独立结果。
-- AU carrier alternation 是否按有效且未退订消息计算。
-- batch 大小限制。
-- 是否异步处理。
+- Does one failure fail the entire batch?
+- Return `207 Multi-Status` or independent per-item results?
+- AU carrier alternation counted on valid, unsubscribed messages?
+- Batch size limit.
+- Async or sync processing?
 
-### Scheduled messages
+### Scheduled Messages
 
-增加 `send_at`：
+Add `send_at`:
 
-- 未来时间保存为 `PENDING`。
-- 到期后再检查 opt-out，还是创建时检查。
-- 时区统一使用 UTC。
-- 测试中注入 `Clock`，避免依赖真实时间。
+- Future timestamps save as `PENDING`.
+- Check opt-out at send time or creation time?
+- Always use UTC for time zones.
+- Inject `Clock` in tests to avoid real-time dependency.
 
-### 短信长度与分段
+### SMS Length and Segmentation
 
-可能要求：
+May require:
 
-- GSM-7：160 字符。
-- Unicode/UCS-2：70 字符。
-- 超长内容拆成多段。
-- 限制最大 segment 数或计算费用。
+- GSM-7: 160 characters.
+- Unicode/UCS-2: 70 characters.
+- Long content splits into segments.
+- Limit max segments or compute fees.
 
-重点不是背完整 GSM 字符表，而是先确认题目希望“简单字符长度”还是“真实短信编码规则”。
+Focus is not memorizing GSM character tables but clarifying whether the problem expects "simple character length" or "true SMS encoding rules."
 
-## 路由方面还能怎样扩展
+## Routing Extensions
 
-当前 AU 是简单全局交替。可能变化为：
+Current AU uses simple global alternation. Possible variations:
 
-1. 加 carrier：Telstra -> Optus -> Vodafone。
-2. 加权轮询：例如 50% / 30% / 20%。
-3. 按号码前缀选择 carrier。
-4. 按成本选择最便宜 carrier。
-5. 按 carrier 健康状态排除故障节点。
-6. 按消息类型或客户等级选择线路。
-7. 配置文件驱动规则，而不是写死在 Java 中。
-8. 每个国家独立维护轮询状态。
-9. sticky routing：同一号码始终选择相同 carrier。
-10. capacity limit：carrier 达到速率限制后选择下一个。
+1. Add carrier: Telstra → Optus → Vodafone.
+2. Weighted round-robin: e.g., 50% / 30% / 20%.
+3. Route by phone number prefix.
+4. Route by lowest cost carrier.
+5. Exclude failed carriers by health status.
+6. Route by message type or customer tier.
+7. Configuration-driven rules instead of hardcoded Java.
+8. Per-country independent round-robin state.
+9. Sticky routing: same phone number always uses same carrier.
+10. Capacity limits: move to next carrier if rate limit reached.
 
-现场实现时，不建议一开始就建立复杂规则引擎。先提取最小的 `RoutingStrategy` 或配置映射即可。
+In live coding, avoid complex rule engines from the start. Extract the minimal `RoutingStrategy` or configuration mapping first.
 
-## 错误处理扩展
+## Error Handling Extensions
 
-现有 `ApiExceptionHandler` 已经统一了错误结构。可能要求：
+Existing `ApiExceptionHandler` already standardizes error structure. May require:
 
-- 增加 `409 INVALID_STATUS_TRANSITION`。
-- carrier timeout 映射为 `503`。
-- 增加 `timestamp`、`path`、`trace_id`。
-- 多字段校验一次返回所有错误。
-- 不向客户端泄露内部 exception message。
-- 无效 enum 与 malformed JSON 使用不同错误码。
+- `409 INVALID_STATUS_TRANSITION`.
+- Carrier timeout maps to `503`.
+- Add `timestamp`, `path`, `trace_id`.
+- Return all validation errors in one response.
+- Do not leak internal exception messages to clients.
+- Distinguish invalid enum from malformed JSON with different error codes.
 
-一个容易被追问的点是：退订号码当前仍返回 `201 Created`，并保存为 `BLOCKED`。这是合理的，因为系统记录了一次发送尝试；如果改成 `403`，就可能无法通过 status API 查询这次被阻止的尝试。需要能够解释这个取舍。
+One subtle point: unsubscribed numbers currently return `201 Created` and save as `BLOCKED`. This is reasonable—the system recorded a send attempt. Changing to `403` might prevent querying this blocked attempt via status API. Be ready to explain the tradeoff.
 
-## 测试型 Live Coding
+## Test-Focused Live Coding
 
-面试官也可能不给新功能，而要求：
+Interviewer may not request new features but instead ask to:
 
-- 为并发 AU routing 补测试。
-- 为 opt-out 幂等性补测试。
-- 为非法状态转换补测试。
-- 修一个已有 failing test。
-- 把 controller 测试从手工字符串解析改成 `ObjectMapper`。
-- 为 repository 写 contract test。
-- mock gateway，验证失败时消息状态。
-- 使用参数化测试覆盖各种电话号码。
+- Add concurrent AU routing tests.
+- Add opt-out idempotency tests.
+- Add illegal state transition tests.
+- Fix a failing test.
+- Refactor controller tests from manual string parsing to `ObjectMapper`.
+- Write a repository contract test.
+- Mock gateway, verify message status on failure.
+- Parameterize tests for various phone numbers.
 
-这种题通常在看是否先定义行为，再做最小实现，而不是一次重构整个项目。
+This style assesses whether you define behavior first, then minimize implementation—not a wholesale project refactor in one go.
 
-## 最推荐的实战准备顺序
+## Recommended Hands-On Preparation Order
 
-如果时间有限，优先练这四道：
+If time is limited, prioritize these four scenarios:
 
-1. 增加 `PATCH /messages/{id}/status`，实现合法状态机。
-2. 增加 `DELETE /optout/{phoneNumber}`，允许重新订阅。
-3. 给 routing 增加 Vodafone 或 weighted round-robin。
-4. 引入 fake `SmsGateway`，处理成功、失败和 fallback。
+1. Add `PATCH /messages/{id}/status` with valid state machine.
+2. Add `DELETE /optout/{phoneNumber}` to allow re-subscription.
+3. Add Vodafone to routing or implement weighted round-robin.
+4. Introduce fake `SmsGateway`, handle success, failure, and fallback.
 
-每道都按同一个节奏：
+Each follows the same rhythm:
 
 ```text
-确认业务语义
--> 先补 service test
--> 最小实现
--> 补 controller test
--> 跑相关测试
--> 解释并发、持久化和 production 限制
+Clarify business semantics
+-> Add service tests first
+-> Minimal implementation
+-> Add controller tests
+-> Run related test suite
+-> Explain concurrency, persistence, production constraints
 ```
 
-## 总结
+## Summary
 
-状态生命周期、可扩展路由、opt-in、carrier failure/fallback 是这份项目最有可能的四个 live coding 方向，其中状态生命周期概率最高。
+Message state lifecycle, extensible routing, opt-in, and carrier failure/fallback are the four most likely live coding directions for this project, with message state lifecycle being the highest probability.
